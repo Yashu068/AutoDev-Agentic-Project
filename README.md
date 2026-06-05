@@ -323,17 +323,3 @@ project/
 
 ---
 
-## 💡 Instructions For AI Coding Agents
-
-When working on this repository, you **must adhere to these instructions strictly**:
-
-> [!WARNING]
-> *   **Never** redesign the architecture.
-> *   **Never** replace the chosen tech stack.
-> *   **Never** suggest paid services.
-> *   **Always** generate complete, robust, production-ready files.
-> *   **Continue** from existing progress.
-> *   **Follow** the six-agent workflow sequentially.
-> *   **Preserve** `AutoDevState` structure exactly as defined in `state.py`.
-> *   **Respect** retry limits and escalation protocols.
-> *   **Use** the Docker sandbox for all test executions.
