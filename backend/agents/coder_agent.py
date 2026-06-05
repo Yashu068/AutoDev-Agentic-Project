@@ -222,6 +222,12 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     for i, file_task in enumerate(file_tasks, start=1):
         file_path = file_task["file_path"]
+
+        # Skip if already generated (preserves debugger fixes on retry)
+        if file_path in code_files:
+            log(state, "Coder", f"[{i}/{len(file_tasks)}] Skipping (already exists): {file_path}")
+            continue
+
         log(state, "Coder", f"[{i}/{len(file_tasks)}] Generating: {file_path}")
 
         user_prompt = _build_user_prompt(file_task, project_context, code_files)

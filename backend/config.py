@@ -312,7 +312,7 @@ class Settings:
     sandbox_cpu_quota:  int   = 50000   # 50% of one CPU core
 
     # Agent limits
-    max_debug_retries:  int   = 3
+    max_debug_retries:  int   = 5
     max_tokens_default: int   = 4096
     llm_temperature:    float = 0.2
 

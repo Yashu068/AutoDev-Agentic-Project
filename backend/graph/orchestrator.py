@@ -131,7 +131,7 @@ async def escalate_node(state: AutoDevState) -> AutoDevState:
 # 3.  Routing / conditional edges
 # ─────────────────────────────────────────────────────────────────────────────
 
-MAX_RETRIES = 3  # must match settings.max_debug_retries in config.py
+MAX_RETRIES = 5  # must match settings.max_debug_retries in config.py
 
 
 def route_after_tester(
