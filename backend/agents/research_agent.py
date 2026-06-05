@@ -39,7 +39,7 @@ from firecrawl import FirecrawlApp
 from tavily import TavilyClient
 
 from config import AgentName, build_messages, call_llm, settings
-from graph.state import AutoDevState, log
+from graph.state import AutoDevState, RunStatus, log
 
 logger = logging.getLogger("agentic-platform")
 
@@ -235,11 +235,12 @@ def _parse_research_output(raw: str) -> dict[str, Any]:
         }
 
 
-def _extract_queries_from_prd(prd_text: str, run_id: str) -> list[str]:
+def _extract_queries_from_prd(prd_text: str, run_id: str) -> tuple[list[str], int]:
     """
     Use a lightweight LLM call to extract clean search queries from the PRD
     instead of blindly slicing the raw text.
     Falls back to simple slicing if the LLM call fails.
+    Returns (queries, tokens_used).
     """
     try:
         result = call_llm(
@@ -252,6 +253,7 @@ def _extract_queries_from_prd(prd_text: str, run_id: str) -> list[str]:
             max_tokens=256,
             run_id=run_id,
         )
+        tokens = int(result.get("total_tokens", 0))
         raw = str(result["content"]).strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
@@ -259,13 +261,13 @@ def _extract_queries_from_prd(prd_text: str, run_id: str) -> list[str]:
             raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
         queries = json.loads(raw)
         if isinstance(queries, list) and len(queries) >= 1:
-            return [str(q) for q in queries[:3]]
+            return [str(q) for q in queries[:3]], tokens
     except Exception as e:
         logger.warning("Query extraction failed, using fallback | error=%s", e)
 
     # Fallback: take first sentence-like chunk
     first_line = prd_text.strip().split("\n")[0][:150]
-    return [first_line, f"how to build {first_line[:80]}"]
+    return [first_line, f"how to build {first_line[:80]}"], 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -289,7 +291,8 @@ async def run(state: AutoDevState) -> AutoDevState:
     run_id = state["run_id"]
 
     # ── Step 1: Extract search queries via LLM ────────────────────────────────
-    queries = _extract_queries_from_prd(prd, run_id)
+    queries, extraction_tokens = _extract_queries_from_prd(prd, run_id)
+    state["total_tokens"] = state.get("total_tokens", 0) + extraction_tokens
     log(state, "Research", f"Running {len(queries)} Tavily searches: {queries}")
 
     # ── Step 2: Tavily web search (non-blocking) ──────────────────────────────
@@ -325,13 +328,18 @@ async def run(state: AutoDevState) -> AutoDevState:
     messages    = build_messages(_SYSTEM_PROMPT, user_prompt)
 
     log(state, "Research", "Calling LLM for structured research output")
-    llm_result = call_llm(
-        agent=AgentName.RESEARCH,
-        messages=messages,
-        temperature=0.1,        # low temp = more deterministic JSON
-        max_tokens=2048,
-        run_id=run_id,
-    )
+    try:
+        llm_result = call_llm(
+            agent=AgentName.RESEARCH,
+            messages=messages,
+            temperature=0.1,        # low temp = more deterministic JSON
+            max_tokens=2048,
+            run_id=run_id,
+        )
+    except RuntimeError as e:
+        log(state, "Research", f"LLM call failed: {e}")
+        state["status"] = RunStatus.FAILED
+        return state
 
     # ── Step 5: Parse + save ──────────────────────────────────────────────────
     research_output = _parse_research_output(str(llm_result["content"]))

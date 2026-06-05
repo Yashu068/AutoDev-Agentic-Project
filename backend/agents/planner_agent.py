@@ -26,7 +26,7 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from config import AgentName, build_messages, call_llm
-from graph.state import AutoDevState, log
+from graph.state import AutoDevState, RunStatus, log
 
 logger = logging.getLogger("agentic-platform")
 
@@ -238,7 +238,7 @@ async def run(state: AutoDevState) -> AutoDevState:
     # ── Guard ────────────────────────────────────────────────────────────────
     if not research_output:
         log(state, "Planner", "ERROR: research_output empty — cannot plan")
-        return {**state, "status": "planner_failed"}
+        return {**state, "status": RunStatus.FAILED}
 
     # ── Build prompts ────────────────────────────────────────────────────────
     system_prompt = _SYSTEM_PROMPT
@@ -305,7 +305,7 @@ async def run(state: AutoDevState) -> AutoDevState:
         )
         return {
             **state,
-            "status":       "planner_failed",
+            "status":       RunStatus.FAILED,
             "total_tokens": total_tokens,
         }
 
@@ -319,6 +319,6 @@ async def run(state: AutoDevState) -> AutoDevState:
     return {
         **state,
         "task_plan":    task_plan.model_dump(),   # dict → LangGraph serializable
-        "status":       "planner_complete",
+        "status":       RunStatus.PLANNING,
         "total_tokens": total_tokens,
     }
