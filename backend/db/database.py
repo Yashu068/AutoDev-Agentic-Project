@@ -14,13 +14,13 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from typing import AsyncGenerator
 
-from config import settings   # your existing config.py — must expose settings.DATABASE_URL
+from config import settings   # your existing config.py — must expose settings.database_url
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
 engine: AsyncEngine = create_async_engine(
-    settings.DATABASE_URL,       # e.g. "postgresql+asyncpg://user:pass@host/db"
+    settings.database_url,       # e.g. "postgresql+asyncpg://user:pass@host/db"
     echo=False,                  # set True locally for SQL debug logs
     pool_size=5,
     max_overflow=10,
