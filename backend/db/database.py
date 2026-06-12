@@ -75,6 +75,6 @@ async def init_db() -> None:
     Call from FastAPI lifespan / startup event.
     Does NOT drop or migrate existing tables — safe to call on every boot.
     """
-    import db.models
+    import db.models  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

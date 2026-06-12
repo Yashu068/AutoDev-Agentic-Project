@@ -28,13 +28,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shutil
-import subprocess
-from pathlib import Path
 from typing import Any
 
-from config import AgentName, build_messages, call_llm, settings
+from config import AgentName, build_messages, call_llm
 from graph.state import AutoDevState, log
+from tools.smart_linter import run_lint
+from tools.zip_delivery import create_zip_from_folder
 
 logger = logging.getLogger("agentic-platform")
 
@@ -59,67 +58,6 @@ Your JSON response must have this EXACT structure:
 }
 """.strip()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Ruff lint in Docker
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _run_ruff_lint(sandbox_folder: str) -> list[dict[str, Any]]:
-    """
-    Run Ruff linter inside Docker on the sandbox folder.
-    Returns list of lint issues: [{file, line, message}]
-    """
-    inner_cmd = (
-        "pip install --quiet ruff > /dev/null 2>&1 && "
-        "ruff check /app --output-format=json 2>/dev/null || true"
-    )
-
-    docker_cmd = [
-        "docker", "run", "--rm",
-        f"--memory={settings.sandbox_memory_mb}m",
-        f"--cpu-quota={settings.sandbox_cpu_quota}",
-        "-v", f"{sandbox_folder}:/app",
-        "-w", "/app",
-        "python:3.11-slim",
-        "sh", "-c", inner_cmd,
-    ]
-
-    try:
-        result = subprocess.run(
-            docker_cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        logger.warning("Ruff lint failed: %s", e)
-        return []
-
-    # Parse Ruff JSON output
-    stdout = result.stdout.strip()
-    if not stdout:
-        return []
-
-    try:
-        raw_issues = json.loads(stdout)
-    except json.JSONDecodeError:
-        logger.warning("Could not parse Ruff JSON output")
-        return []
-
-    lint_issues = []
-    for issue in raw_issues[:50]:  # cap at 50 issues to avoid state bloat
-        file_path = issue.get("filename", "")
-        # Strip Docker mount prefix /app/ from file paths
-        if file_path.startswith("/app/"):
-            file_path = file_path[5:]
-
-        lint_issues.append({
-            "file": file_path,
-            "line": issue.get("location", {}).get("row", 0),
-            "message": f"{issue.get('code', '???')}: {issue.get('message', '')}",
-        })
-
-    return lint_issues
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,23 +134,6 @@ def _parse_review_json(raw: str) -> dict[str, Any] | None:
     return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. ZIP packaging
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _create_zip(sandbox_folder: str, project_name: str) -> str:
-    """
-    Create a ZIP archive of the sandbox folder.
-    Returns the path to the ZIP file.
-    """
-    # Place ZIP next to sandbox folder, not inside it
-    zip_base = Path(sandbox_folder).parent / f"{project_name}_delivery"
-    zip_path = shutil.make_archive(
-        base_name=str(zip_base),
-        format="zip",
-        root_dir=sandbox_folder,
-    )
-    return zip_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -263,9 +184,9 @@ async def run(state: AutoDevState) -> AutoDevState:
         }
         return state
 
-    # ── Step 1: Run Ruff lint ─────────────────────────────────────────────────
-    log(state, "Reviewer", "Running Ruff lint in Docker...")
-    lint_issues = _run_ruff_lint(sandbox_folder)
+    # ── Step 1: Run Ruff/ESLint lint ──────────────────────────────────────────
+    log(state, "Reviewer", "Running linter in Docker...")
+    lint_issues = run_lint(sandbox_folder)
     log(state, "Reviewer", f"Ruff found {len(lint_issues)} issue(s)")
 
     # ── Step 2: LLM quality review ───────────────────────────────────────────
@@ -311,7 +232,7 @@ async def run(state: AutoDevState) -> AutoDevState:
     project_name = task_plan.get("project_name", "project")
 
     try:
-        zip_path = _create_zip(sandbox_folder, project_name)
+        zip_path = create_zip_from_folder(sandbox_folder, project_name)
         log(state, "Reviewer", f"ZIP created: {zip_path}")
     except Exception as e:
         log(state, "Reviewer", f"ZIP creation failed: {e}")

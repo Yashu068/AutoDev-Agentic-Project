@@ -337,3 +337,11 @@ When working on this repository, you **must adhere to these instructions strictl
 > *   **Preserve** `AutoDevState` structure exactly as defined in `state.py`.
 > *   **Respect** retry limits and escalation protocols.
 > *   **Use** the Docker sandbox for all test executions.
+
+
+
+# 1. Sabse pehle virtual environment ko activate karein
+source .venv/bin/activate
+
+# 2. Phir requirements ko install karein
+pip install -r backend/requirements.txt

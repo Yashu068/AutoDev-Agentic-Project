@@ -33,114 +33,16 @@ import json
 import logging
 from typing import Any
 
-import httpx
-from bs4 import BeautifulSoup
-from firecrawl import FirecrawlApp
-from tavily import TavilyClient
-
-from config import AgentName, build_messages, call_llm, settings
+from config import AgentName, build_messages, call_llm
 from graph.state import AutoDevState, RunStatus, log
+from tools.smart_scraper import web_search, scrape_url
 
 logger = logging.getLogger("agentic-platform")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Tool clients (lazy singletons)
+# Tool functions are provided by tools.smart_scraper (web_search, scrape_url)
 # ─────────────────────────────────────────────────────────────────────────────
-
-_tavily: TavilyClient | None = None
-_firecrawl: FirecrawlApp | None = None
-
-
-def _get_tavily() -> TavilyClient:
-    global _tavily
-    if _tavily is None:
-        _tavily = TavilyClient(api_key=settings.tavily_api_key)
-    return _tavily
-
-
-def _get_firecrawl() -> FirecrawlApp:
-    global _firecrawl
-    if _firecrawl is None:
-        _firecrawl = FirecrawlApp(api_key=settings.firecrawl_api_key)
-    return _firecrawl
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Tool functions (synchronous — called via asyncio.to_thread in run())
-# ─────────────────────────────────────────────────────────────────────────────
-
-def tavily_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
-    """
-    Tavily se web search karo.
-    Returns list of {url, title, snippet}.
-    """
-    try:
-        response = _get_tavily().search(
-            query=query,
-            max_results=max_results,
-            search_depth="advanced",        # deeper results
-            include_answer=False,
-            include_raw_content=False,
-        )
-        results = []
-        for r in response.get("results", []):
-            results.append({
-                "url":     r.get("url", ""),
-                "title":   r.get("title", ""),
-                "snippet": r.get("content", "")[:500],   # trim long snippets
-            })
-        logger.info("Tavily search OK | query='%s' results=%d", query, len(results))
-        return results
-
-    except Exception as e:
-        logger.warning("Tavily search FAILED | query='%s' error=%s", query, e)
-        return []
-
-
-def firecrawl_scrape(url: str) -> str:
-    """
-    Firecrawl se ek URL ko clean markdown mein convert karo.
-    Returns scraped text or empty string on failure.
-    """
-    try:
-        result = _get_firecrawl().scrape_url(
-            url,
-            params={"formats": ["markdown"]},
-        )
-        content = result.get("markdown", "") or ""
-        logger.info("Firecrawl scrape OK | url=%s chars=%d", url, len(content))
-        return content[:3000]   # token limit ke liye trim
-
-    except Exception as e:
-        logger.warning("Firecrawl scrape FAILED | url=%s error=%s — trying BS4", url, e)
-        return _bs4_scrape(url)
-
-
-def _bs4_scrape(url: str) -> str:
-    """
-    BeautifulSoup fallback scraper.
-    Firecrawl fail hone pe yahi use hota hai.
-    """
-    try:
-        resp = httpx.get(url, timeout=10, follow_redirects=True)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
-
-        # Remove noise
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-            tag.decompose()
-
-        text = soup.get_text(separator="\n", strip=True)
-        # Collapse blank lines
-        lines = [l for l in text.splitlines() if l.strip()]
-        clean = "\n".join(lines)
-        logger.info("BS4 scrape OK | url=%s chars=%d", url, len(clean))
-        return clean[:3000]
-
-    except Exception as e:
-        logger.warning("BS4 scrape FAILED | url=%s error=%s", url, e)
-        return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -298,7 +200,7 @@ async def run(state: AutoDevState) -> AutoDevState:
     # ── Step 2: Tavily web search (non-blocking) ──────────────────────────────
     all_results: list[dict] = []
     for q in queries:
-        results = await asyncio.to_thread(tavily_search, q, 5)
+        results = await asyncio.to_thread(web_search, q, 5)
         all_results.extend(results)
 
     # Deduplicate by URL
@@ -317,7 +219,7 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     for url in top_urls:
         log(state, "Research", f"Scraping: {url}")
-        content = await asyncio.to_thread(firecrawl_scrape, url)
+        content = await asyncio.to_thread(scrape_url, url)
         if content:
             scraped_docs.append(f"Source: {url}\n\n{content}")
 

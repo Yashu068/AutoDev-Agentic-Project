@@ -41,22 +41,30 @@ class AutoDevState(TypedDict):
 
     # ── Agent 2 — Planner ────────────────────────────────────────────────────
     task_plan:       Optional[Dict[str, Any]]
-    # Shape written by Planner agent (Pydantic-validated):
+    # Shape written by Planner agent (Pydantic-validated TaskPlan):
     # {
-    #   "project_name":   str,
-    #   "description":    str,
-    #   "tech_stack":     List[str],
+    #   "project_name":        str,
+    #   "project_description": str,
+    #   "tech_stack": {
+    #       "backend": List[str], "frontend": List[str], "database": List[str],
+    #       "devops": List[str],  "testing": List[str],  "other": List[str],
+    #   },
     #   "files": [
     #     {
-    #       "path":        str,           e.g. "src/models/user.py"
-    #       "description": str,
-    #       "depends_on":  List[str],     paths of files that must exist first
-    #       "priority":    int,           lower = write first
+    #       "file_path":            str,         e.g. "backend/api/main.py"
+    #       "language":             str,         e.g. "python"
+    #       "purpose":              str,
+    #       "dependencies":         List[str],   file_paths this file imports from
+    #       "implementation_order": int,         1-based; lower = write first
+    #       "key_functions":        List[str],
+    #       "context_needed":       str,
     #     }
     #   ],
-    #   "entrypoint":     str,            e.g. "main.py"
-    #   "run_command":    str,            e.g. "python main.py"
-    #   "test_command":   str,            e.g. "pytest tests/"
+    #   "setup_commands":      List[str],
+    #   "env_variables":       List[str],
+    #   "total_files":         int,
+    #   "estimated_complexity": str,             "low" | "medium" | "high"
+    #   "notes":               str,
     # }
 
     # ── Agent 3 — Coder ──────────────────────────────────────────────────────

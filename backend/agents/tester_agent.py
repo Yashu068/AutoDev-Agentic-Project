@@ -27,12 +27,12 @@ Note: Currently supports Python projects only (pytest).
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
 from typing import Any
 
-from config import AgentName, build_messages, call_llm, settings
+from config import AgentName, build_messages, call_llm
 from graph.state import AutoDevState, RunStatus, log
+from tools.docker_runner import run_code_in_sandbox
 
 logger = logging.getLogger("agentic-platform")
 
@@ -133,110 +133,6 @@ def _write_tests_to_sandbox(sandbox_folder: str, test_code: dict[str, str]) -> N
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Docker sandbox execution
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _run_tests_in_docker(sandbox_folder: str) -> dict[str, Any]:
-    """
-    Run pytest inside a Docker container with resource limits.
-
-    Returns dict matching state["test_results"] shape:
-        {passed, summary, failures, stdout, stderr, exit_code}
-    """
-    # pip install silenced; only pytest stdout/stderr captured
-    inner_cmd = (
-        "pip install --quiet pytest > /dev/null 2>&1 && "
-        "if [ -f requirements.txt ]; then "
-        "pip install --quiet -r requirements.txt > /dev/null 2>&1; fi && "
-        "python -m pytest tests/ -v --tb=short"
-    )
-
-    docker_cmd = [
-        "docker", "run", "--rm",
-        f"--memory={settings.sandbox_memory_mb}m",
-        f"--cpu-quota={settings.sandbox_cpu_quota}",
-        "-e", "PYTHONPATH=/app",
-        "-v", f"{sandbox_folder}:/app",
-        "-w", "/app",
-        "python:3.11-slim",
-        "sh", "-c", inner_cmd,
-    ]
-
-    # sandbox_timeout_s is for test execution; +120s buffer for Docker setup + pip
-    total_timeout = settings.sandbox_timeout_s + 120
-
-    try:
-        result = subprocess.run(
-            docker_cmd,
-            capture_output=True,
-            text=True,
-            timeout=total_timeout,
-        )
-        stdout = result.stdout
-        stderr = result.stderr
-        exit_code = result.returncode
-
-    except subprocess.TimeoutExpired:
-        return {
-            "passed": False,
-            "summary": f"Timed out after {total_timeout}s",
-            "failures": [{"test": "TIMEOUT", "error": f"Exceeded {total_timeout}s"}],
-            "stdout": "",
-            "stderr": "TimeoutExpired",
-            "exit_code": -1,
-        }
-    except FileNotFoundError:
-        return {
-            "passed": False,
-            "summary": "Docker not found — install Docker to run sandboxed tests",
-            "failures": [{"test": "DOCKER", "error": "docker command not in PATH"}],
-            "stdout": "",
-            "stderr": "Docker not found",
-            "exit_code": -1,
-        }
-
-    passed = exit_code == 0
-    summary = _parse_summary(stdout) or ("All tests passed" if passed else "Tests failed")
-    failures = _parse_failures(stdout) if not passed else []
-
-    return {
-        "passed": passed,
-        "summary": summary,
-        "failures": failures,
-        "stdout": stdout[-3000:],   # trim to avoid bloating state
-        "stderr": stderr[-1000:],
-        "exit_code": exit_code,
-    }
-
-
-def _parse_summary(output: str) -> str:
-    """Extract pytest summary line (e.g. '3 passed, 1 failed in 0.45s')."""
-    for line in reversed(output.splitlines()):
-        if "passed" in line or "failed" in line or "error" in line:
-            cleaned = line.strip("= ").strip()
-            if cleaned:
-                return cleaned
-    return ""
-
-
-def _parse_failures(output: str) -> list[dict[str, str]]:
-    """Extract individual failure details from pytest -v --tb=short output."""
-    failures = []
-    for line in output.splitlines():
-        if line.startswith("FAILED "):
-            parts = line.split(" - ", 1)
-            test_name = parts[0].replace("FAILED", "").strip()
-            error_msg = parts[1].strip() if len(parts) > 1 else "See stdout for details"
-            failures.append({"test": test_name, "error": error_msg})
-
-    if not failures:
-        # Couldn't parse specific failures — capture raw output tail
-        failures.append({"test": "unknown", "error": output[-500:]})
-
-    return failures
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # 5. Main agent entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -314,7 +210,7 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     # ── Step 3: Run pytest in Docker sandbox ──────────────────────────────────
     log(state, "Tester", "Running pytest in Docker sandbox...")
-    test_results = _run_tests_in_docker(sandbox_folder)
+    test_results = run_code_in_sandbox(sandbox_folder)
 
     log(
         state, "Tester",

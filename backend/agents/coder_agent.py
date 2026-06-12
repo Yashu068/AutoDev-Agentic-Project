@@ -24,8 +24,6 @@ Writes : state["code_files"], state["sandbox_folder"], state["total_tokens"]
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -165,18 +163,27 @@ def _extract_code(raw: str) -> str:
 
 def _write_to_sandbox(code_files: dict[str, str], project_name: str) -> str:
     """
-    Create a temp directory and write all generated files to disk.
+    Create a temp directory inside backend/sandbox/ and write all generated files to disk.
     Returns the sandbox folder path.
     """
-    sandbox = tempfile.mkdtemp(prefix=f"autodev_{project_name}_")
+    import uuid
+
+    # Create local 'sandbox' folder under the backend directory
+    base_dir = Path(__file__).parent.parent / "sandbox"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique sandbox folder name
+    unique_id = uuid.uuid4().hex[:8]
+    sandbox_path = base_dir / f"autodev_{project_name}_{unique_id}"
+    sandbox_path.mkdir(parents=True, exist_ok=True)
 
     for file_path, content in code_files.items():
-        full_path = Path(sandbox) / file_path
+        full_path = sandbox_path / file_path
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding="utf-8")
 
-    logger.info("Sandbox created | path=%s files=%d", sandbox, len(code_files))
-    return sandbox
+    logger.info("Sandbox created | path=%s files=%d", sandbox_path, len(code_files))
+    return str(sandbox_path.resolve())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

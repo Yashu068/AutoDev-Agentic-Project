@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Optional
 
 from dotenv import load_dotenv
-from openai import APIError, APITimeoutError, OpenAI, RateLimitError
+from openai import APIError, APITimeoutError, OpenAI
 from tenacity import (
     before_sleep_log,
     retry,
