@@ -1051,3 +1051,51 @@
   color: var(--danger-color);
   background-color: var(--danger-bg);
 }
+
+/* Red Error Notice styling when runs fail */
+.error-banner {
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: rgba(239, 68, 68, 0.08);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.05);
+}
+
+.error-banner-header {
+  color: var(--danger-color);
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: 0.5px;
+}
+
+.error-banner-body {
+  color: var(--text-secondary);
+  font-family: var(--mono-font);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Failed Stepper Node coloring */
+.step-node.failed::after {
+  background-color: var(--danger-color);
+}
+
+.step-node.failed .step-circle {
+  border-color: var(--danger-color);
+  color: var(--danger-color);
+  background-color: rgba(239, 68, 68, 0.05);
+  box-shadow: 0 0 10px var(--danger-bg);
+}
+
+.step-node.failed .step-label {
+  color: var(--danger-color);
+}

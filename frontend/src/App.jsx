@@ -281,81 +281,48 @@ export default function App() {
       return;
     }
 
-    let intervalId = null;
+    let active = true;
+    let timerId = null;
 
     const fetchRunData = async () => {
       try {
         // Fetch logs
         const logsRes = await fetch(`${API_BASE}/projects/${activeRunId}/logs`);
         const logsData = await logsRes.json();
-        setActiveLogs(logsData.logs || []);
-
-        // Fetch run details by fetching history and matching ID
-        // (to fetch columns like research_output, task_plan, code_files which are returned by SQLAlchemy models)
-        // Wait, standard route GET /api/v1/projects/{run_id} returns status and ID, but we also want state output.
-        // Let's call /api/v1/projects/{run_id} which fetches status, then we can query detailed state or mock detail components.
-        // Wait! Let's check what the GET /api/v1/projects/{run_id} returns in backend/api/routes/runs.py:
-        // returns {"run_id": str(run.id), "status": run.status}
-        // Wait, is there an endpoint that returns the complete run details?
-        // Let's check runs.py.
-        // Ah! In runs.py:
-        // @router.get("/projects/{run_id}")
-        // async def get_run_status(run_id: str):
-        //     run = await get_run_from_db(run_id)
-        //     if not run: ...
-        //     return {"run_id": str(run.id), "status": run.status}
-        // Oh, wait! The SQL row itself contains research_output, task_plan, code_files, test_results, review_result, download_url, error_trace!
-        // But the router handler returns ONLY {"run_id": str(run.id), "status": run.status}!
-        // Oh, that means we cannot see the details from that endpoint!
-        // Wait, let's verify runs.py to see if there is another endpoint.
-        // There is:
-        // /projects/{run_id}/logs returns run.logs
-        // /projects/{run_id}/download returns run.download_url
-        // Oh no! There is no endpoint in runs.py that returns the full detail payload of the run (like code_files, task_plan, research_output, test_results, review_result)!
-        // Wait, is that true? Let's check `runs.py` line 124:
-        // @router.get("/projects/{run_id}")
-        // async def get_run_status(run_id: str):
-        //     run = await get_run_from_db(run_id)
-        //     ...
-        //     return {"run_id": str(run.id), "status": run.status}
-        // Yes, it returns only `run_id` and `status`!
-        // Wait! If the user wants the frontend to be fully functional, and we need to display all these outputs, we should definitely modify the backend endpoint `/projects/{run_id}` to return the FULL run object!
-        // That is a surgical edit we should do to `runs.py` to make the dashboard fully functional. Let's make sure the return object is rich.
-        // Wait! Let's check the rule on surgical edits:
-        // "Touch only what you must. Clean up only your own mess... Every changed line should trace directly to the user's request."
-        // The user requested: "frontend must be all functional". For the frontend to show the generated source code, task plans, research outputs, and test results, the backend MUST send them! Returning only status prevents the frontend from being functional. Thus, updating the GET endpoint to return the full Run fields is directly traced to the request.
-        // That's an extremely smart catch! Let's do that change. First, let's complete the analysis of App.jsx, write App.jsx to handle a fully loaded run, and then edit runs.py to supply the full run details.
+        if (active) {
+          setActiveLogs(logsData.logs || []);
+        }
 
         const runRes = await fetch(`${API_BASE}/projects/${activeRunId}`);
         const runData = await runRes.json();
+        
+        if (active) {
+          setActiveRunDetails(runData);
 
-        setActiveRunDetails(runData);
-
-        // Auto-select first code file if not selected and files are loaded
-        if (runData.code_files && Object.keys(runData.code_files).length > 0 && !activeCodeFile) {
-          setActiveCodeFile(Object.keys(runData.code_files)[0]);
-        }
-
-        // If status is not in a terminal state, keep polling
-        const terminalStates = ['completed', 'failed', 'escalated'];
-        if (!terminalStates.includes(runData.status)) {
-          if (!intervalId) {
-            intervalId = setInterval(fetchRunData, 3000);
+          // Auto-select first code file if not selected and files are loaded
+          if (runData.code_files && Object.keys(runData.code_files).length > 0 && !activeCodeFile) {
+            setActiveCodeFile(Object.keys(runData.code_files)[0]);
           }
-        } else {
-          if (intervalId) {
-            clearInterval(intervalId);
+
+          // If status is not in a terminal state, keep polling
+          const terminalStates = ['completed', 'failed', 'escalated'];
+          if (!terminalStates.includes(runData.status)) {
+            timerId = setTimeout(fetchRunData, 3000);
           }
         }
       } catch (err) {
         console.error('Error fetching run details:', err);
+        if (active) {
+          timerId = setTimeout(fetchRunData, 3000);
+        }
       }
     };
 
     fetchRunData();
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      active = false;
+      if (timerId) clearTimeout(timerId);
     };
   }, [activeRunId, activeCodeFile]);
 
@@ -456,9 +423,18 @@ export default function App() {
               >
                 <div className="history-item-header">
                   <span className="history-item-id">run-{run.run_id.substring(0, 8)}</span>
-                  <span className={`status-badge ${run.status}`}>
-                    {run.status}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className={`status-badge ${run.status}`}>
+                      {run.status}
+                    </span>
+                    <button 
+                      className="delete-history-btn"
+                      onClick={(e) => handleDeleteRun(e, run.run_id)}
+                      title="Delete Run"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
                 <div className="history-item-date">Agentic Session</div>
               </div>
@@ -589,6 +565,18 @@ export default function App() {
 
               {/* LEFT SIDE: Collapsible Agent Output Panel */}
               <div className="outputs-panel">
+
+                {activeRunDetails && (activeRunDetails.status === 'failed' || activeRunDetails.status === 'escalated') && (
+                  <div className="error-banner">
+                    <div className="error-banner-header">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                      PIPELINE RUN FAILED
+                    </div>
+                    <div className="error-banner-body">
+                      {activeRunDetails.error_trace || 'Pipeline failed with all configured fallback models. See console logs for details.'}
+                    </div>
+                  </div>
+                )}
 
                 {/* 1. Submitted specification (PRD) */}
                 <div className={`panel-card ${accordionState.prd ? 'open' : ''}`}>

@@ -1,0 +1,32 @@
+{
+  "name": "todoapp",
+  "version": "1.0.0",
+  "description": "A simple TODO application that allows users to add, delete, update, and mark tasks as completed",
+  "main": "server.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "NODE_ENV=production node server.js",
+    "server": "node server.js",
+    "server:dev": "nodemon server.js"
+  },
+  "keywords": [
+    "todo",
+    "nextjs",
+    "express",
+    "react"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.19.2",
+    "next": "14.2.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
