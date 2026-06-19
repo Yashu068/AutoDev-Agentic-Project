@@ -73,33 +73,39 @@ class AgentName(str, Enum):
 
 
 # ─────────────────────────────────────────────
-# 4. Model Registry — primary + fallback per agent
+# 4. Model Registry — ordered list per agent (tried sequentially)
 # ─────────────────────────────────────────────
-AGENT_MODELS: dict[str, dict[str, str]] = {
-    AgentName.RESEARCH: {
-        "primary":  "google/gemma-3-27b-it:free",
-        "fallback": "microsoft/phi-4-reasoning:free",
-    },
-    AgentName.PLANNER: {
-        "primary":  "nvidia/llama-3.3-nemotron-super-49b-v1:free",
-        "fallback": "microsoft/phi-4-reasoning:free",
-    },
-    AgentName.CODER: {
-        "primary":  "nvidia/llama-3.3-nemotron-super-49b-v1:free",
-        "fallback": "microsoft/phi-4-reasoning:free",
-    },
-    AgentName.TESTER: {
-        "primary":  "meta-llama/llama-3.3-70b-instruct:free",
-        "fallback": "microsoft/phi-4-reasoning:free",
-    },
-    AgentName.DEBUGGER: {
-        "primary":  "nvidia/llama-3.3-nemotron-super-49b-v1:free",
-        "fallback": "microsoft/phi-4-reasoning:free",
-    },
-    AgentName.REVIEWER: {
-        "primary":  "google/gemma-3-27b-it:free",
-        "fallback": "microsoft/phi-4-reasoning:free",
-    },
+AGENT_MODELS: dict[str, list[str]] = {
+    AgentName.RESEARCH: [
+        "google/gemma-4-31b-it:free",
+        "openai/gpt-oss-120b:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    ],
+    AgentName.PLANNER: [
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "google/gemma-4-31b-it:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    ],
+    AgentName.CODER: [
+        "poolside/laguna-m.1:free",
+        "openai/gpt-oss-120b:free",
+        "cohere/north-mini-code:free",
+    ],
+    AgentName.TESTER: [
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "cohere/north-mini-code:free",
+        "openai/gpt-oss-120b:free",
+    ],
+    AgentName.DEBUGGER: [
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "poolside/laguna-m.1:free",
+        "cohere/north-mini-code:free",
+    ],
+    AgentName.REVIEWER: [
+        "google/gemma-4-31b-it:free",
+        "openai/gpt-oss-120b:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+    ],
 }
 
 
@@ -184,76 +190,40 @@ def call_llm(
     temperature: float = 0.2,
     max_tokens: int = 4096,
     run_id: Optional[str] = None,
-    force_fallback: bool = False,
 ) -> dict[str, object]:
     """
     Public interface for all agent LLM calls.
-
-    Parameters
-    ----------
-    agent          : AgentName enum — routes to correct model pair.
-    messages       : OpenAI-format [{"role": ..., "content": ...}].
-    temperature    : Sampling temperature. Default 0.2 = deterministic.
-    max_tokens     : Max completion tokens.
-    run_id         : LangGraph run_id for trace correlation.
-    force_fallback : Skip primary, use fallback directly (for tests).
-
-    Returns
-    -------
-    dict with keys: content, model_used, prompt_tokens, completion_tokens,
-                    total_tokens, latency_ms, run_id
+    Tries each model in AGENT_MODELS[agent] sequentially until one succeeds.
     """
-    config   = AGENT_MODELS[agent]
-    primary  = config["primary"]
-    fallback = config["fallback"]
-    first    = fallback if force_fallback else primary
+    models = AGENT_MODELS[agent]
+    last_err: Exception | None = None
 
-    try:
-        result = _make_retrying_call(first, messages, temperature, max_tokens, run_id)
-        logger.info(
-            "LLM OK | agent=%s model=%s tokens=%s latency=%sms run_id=%s",
-            agent.value, result["model_used"],
-            result["total_tokens"], result["latency_ms"], run_id,
-        )
-        return result
-
-    except Exception as primary_err:
-        if force_fallback or first == fallback:
-            logger.error(
-                "LLM FAILED | agent=%s model=%s error=%s",
-                agent.value, first, primary_err,
-            )
-            raise RuntimeError(
-                f"[{agent.value}] Model {first} failed after retries. "
-                f"Error: {primary_err}"
-            ) from primary_err
-
-        logger.warning(
-            "LLM primary failed — switching to fallback | agent=%s "
-            "primary=%s fallback=%s error=%s",
-            agent.value, primary, fallback, primary_err,
-        )
-
+    for i, model in enumerate(models):
         try:
-            result = _make_retrying_call(
-                fallback, messages, temperature, max_tokens, run_id
-            )
+            result = _make_retrying_call(model, messages, temperature, max_tokens, run_id)
             logger.info(
-                "LLM FALLBACK OK | agent=%s model=%s tokens=%s latency=%sms",
+                "LLM OK | agent=%s model=%s tokens=%s latency=%sms run_id=%s",
                 agent.value, result["model_used"],
-                result["total_tokens"], result["latency_ms"],
+                result["total_tokens"], result["latency_ms"], run_id,
             )
             return result
+        except Exception as err:
+            last_err = err
+            if i < len(models) - 1:
+                logger.warning(
+                    "LLM model %d/%d failed — trying next | agent=%s model=%s error=%s",
+                    i + 1, len(models), agent.value, model, err,
+                )
+            else:
+                logger.error(
+                    "LLM FAILED (all %d models) | agent=%s last_model=%s error=%s",
+                    len(models), agent.value, model, err,
+                )
 
-        except Exception as fallback_err:
-            logger.error(
-                "LLM FAILED (both) | agent=%s primary=%s fallback=%s error=%s",
-                agent.value, primary, fallback, fallback_err,
-            )
-            raise RuntimeError(
-                f"[{agent.value}] Both primary ({primary}) and fallback "
-                f"({fallback}) failed. Last error: {fallback_err}"
-            ) from fallback_err
+    raise RuntimeError(
+        f"[{agent.value}] All {len(models)} models failed. "
+        f"Tried: {', '.join(models)}. Last error: {last_err}"
+    )
 
 
 # ─────────────────────────────────────────────

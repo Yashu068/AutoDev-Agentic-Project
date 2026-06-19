@@ -345,3 +345,7 @@ source .venv/bin/activate
 
 # 2. Phir requirements ko install karein
 pip install -r backend/requirements.txt
+
+
+# to start backend
+uvicorn api.main:app --reload --app-dir backend
