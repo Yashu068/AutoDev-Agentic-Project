@@ -348,4 +348,4 @@ pip install -r backend/requirements.txt
 
 
 # to start backend
-uvicorn api.main:app --reload --app-dir backend
+python -m uvicorn api.main:app --app-dir backend --port 8000
