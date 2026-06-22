@@ -152,3 +152,11 @@ def log(state: AutoDevState, agent: str, message: str) -> None:
     entry = f"[{datetime.utcnow().isoformat(timespec='seconds')}] [{agent}] {message}"
     state["logs"].append(entry)
     print(entry)   # also surfaces in LangSmith trace
+
+    # Save the updated state to the database in the background event loop
+    try:
+        import asyncio
+        from tools.db_delivery import save_state_to_db
+        asyncio.create_task(save_state_to_db(dict(state)))
+    except Exception:
+        pass
