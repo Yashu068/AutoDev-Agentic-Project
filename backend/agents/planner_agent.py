@@ -256,7 +256,7 @@ async def run(state: AutoDevState) -> AutoDevState:
             # ✅ Uses config.py call_llm() signature exactly:
             #    call_llm(agent, messages, *, temperature, max_tokens, run_id)
             #    Fallback is handled automatically inside call_llm()
-            llm_result = call_llm(
+            llm_result = await call_llm(
                 agent=AgentName.PLANNER,
                 messages=build_messages(system_prompt, user_prompt),
                 temperature=0.1,      # low temp → deterministic JSON

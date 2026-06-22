@@ -25,6 +25,7 @@ Writes : state["review_result"], state["download_url"], state["total_tokens"]
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -186,7 +187,7 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     # ── Step 1: Run Ruff/ESLint lint ──────────────────────────────────────────
     log(state, "Reviewer", "Running linter in Docker...")
-    lint_issues = run_lint(sandbox_folder)
+    lint_issues = await run_lint(sandbox_folder)
     log(state, "Reviewer", f"Ruff found {len(lint_issues)} issue(s)")
 
     # ── Step 2: LLM quality review ───────────────────────────────────────────
@@ -201,7 +202,7 @@ async def run(state: AutoDevState) -> AutoDevState:
     suggestions: list[str] = []
 
     try:
-        llm_result = call_llm(
+        llm_result = await call_llm(
             agent=AgentName.REVIEWER,
             messages=messages,
             temperature=0.2,
@@ -232,7 +233,7 @@ async def run(state: AutoDevState) -> AutoDevState:
     project_name = task_plan.get("project_name", "project")
 
     try:
-        zip_path = create_zip_from_folder(sandbox_folder, project_name)
+        zip_path = await asyncio.to_thread(create_zip_from_folder, sandbox_folder, project_name)
         log(state, "Reviewer", f"ZIP created: {zip_path}")
     except Exception as e:
         log(state, "Reviewer", f"ZIP creation failed: {e}")

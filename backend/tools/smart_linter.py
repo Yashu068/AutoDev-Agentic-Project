@@ -19,9 +19,9 @@ Docker must be installed and running on the host machine.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ _MAX_ISSUES = 50
 # 1. Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_lint(sandbox_folder: str) -> list[dict[str, Any]]:
+async def run_lint(sandbox_folder: str) -> list[dict[str, Any]]:
     """
     Sandbox folder ko lint karta hai — auto-detect language.
 
@@ -64,10 +64,10 @@ def run_lint(sandbox_folder: str) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
 
     if has_python:
-        issues.extend(_run_ruff(sandbox_folder))
+        issues.extend(await _run_ruff(sandbox_folder))
 
     if has_js:
-        issues.extend(_run_eslint(sandbox_folder))
+        issues.extend(await _run_eslint(sandbox_folder))
 
     if not has_python and not has_js:
         logger.info("No Python or JS/TS files found — lint skipped")
@@ -109,14 +109,14 @@ def _detect_languages(sandbox_path: Path) -> tuple[bool, bool]:
 # 3. Ruff — Python linter
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_ruff(sandbox_folder: str) -> list[dict[str, Any]]:
+async def _run_ruff(sandbox_folder: str) -> list[dict[str, Any]]:
     """Run Ruff inside Docker. Returns parsed lint issues."""
     inner_cmd = (
         "pip install --quiet ruff > /dev/null 2>&1 && "
         "ruff check /app --output-format=json 2>/dev/null || true"
     )
 
-    stdout = _docker_run(sandbox_folder, "python:3.11-slim", inner_cmd)
+    stdout = await _docker_run(sandbox_folder, "python:3.11-slim", inner_cmd)
     if not stdout:
         return []
 
@@ -151,7 +151,7 @@ def _run_ruff(sandbox_folder: str) -> list[dict[str, Any]]:
 # 4. ESLint — JavaScript/TypeScript linter
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_eslint(sandbox_folder: str) -> list[dict[str, Any]]:
+async def _run_eslint(sandbox_folder: str) -> list[dict[str, Any]]:
     """Run ESLint inside Docker. Returns parsed lint issues."""
     # Use flat config auto-init so no .eslintrc needed in the project
     inner_cmd = (
@@ -162,7 +162,7 @@ def _run_eslint(sandbox_folder: str) -> list[dict[str, Any]]:
         "2>/dev/null || true"
     )
 
-    stdout = _docker_run(sandbox_folder, "node:20-slim", inner_cmd)
+    stdout = await _docker_run(sandbox_folder, "node:20-slim", inner_cmd)
     if not stdout:
         return []
 
@@ -203,12 +203,12 @@ def _run_eslint(sandbox_folder: str) -> list[dict[str, Any]]:
 # 5. Docker runner (shared helper)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _docker_run(sandbox_folder: str, image: str, inner_cmd: str) -> str:
+async def _docker_run(sandbox_folder: str, image: str, inner_cmd: str) -> str:
     """
     Run a command inside a Docker container and return stdout.
     Returns empty string on any failure.
     """
-    docker_cmd = [
+    docker_args = [
         "docker", "run", "--rm",
         f"--memory={settings.sandbox_memory_mb}m",
         f"--cpu-quota={settings.sandbox_cpu_quota}",
@@ -220,16 +220,19 @@ def _docker_run(sandbox_folder: str, image: str, inner_cmd: str) -> str:
     ]
 
     try:
-        result = subprocess.run(
-            docker_cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
+        proc = await asyncio.create_subprocess_exec(
+            *docker_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        return result.stdout.strip()
+        stdout_bytes, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=120
+        )
+        return (stdout_bytes.decode() if stdout_bytes else "").strip()
 
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         logger.warning("Lint timed out | image=%s", image)
+        proc.kill()
         return ""
 
     except FileNotFoundError:

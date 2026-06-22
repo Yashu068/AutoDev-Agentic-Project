@@ -307,7 +307,7 @@ async def run(state: AutoDevState) -> AutoDevState:
         messages = build_messages(_SYSTEM_PROMPT, user_prompt)
 
         try:
-            llm_result = call_llm(
+            llm_result = await call_llm(
                 agent=AgentName.DEBUGGER,
                 messages=messages,
                 temperature=0.1,
@@ -342,7 +342,7 @@ async def run(state: AutoDevState) -> AutoDevState:
         messages = build_messages(_SYSTEM_PROMPT, user_prompt)
 
         try:
-            llm_result = call_llm(
+            llm_result = await call_llm(
                 agent=AgentName.DEBUGGER,
                 messages=messages,
                 temperature=0.1,

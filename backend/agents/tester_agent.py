@@ -183,7 +183,7 @@ async def run(state: AutoDevState) -> AutoDevState:
         messages = build_messages(_SYSTEM_PROMPT, user_prompt)
 
         try:
-            llm_result = call_llm(
+            llm_result = await call_llm(
                 agent=AgentName.TESTER,
                 messages=messages,
                 temperature=0.2,
@@ -210,7 +210,7 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     # ── Step 3: Run pytest in Docker sandbox ──────────────────────────────────
     log(state, "Tester", "Running pytest in Docker sandbox...")
-    test_results = run_code_in_sandbox(sandbox_folder)
+    test_results = await run_code_in_sandbox(sandbox_folder)
 
     log(
         state, "Tester",

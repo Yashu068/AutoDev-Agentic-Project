@@ -6,6 +6,7 @@ Handles: OpenRouter client, agent model routing, call_llm() with retry + fallbac
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -14,14 +15,7 @@ from enum import Enum
 from typing import Optional
 
 from dotenv import load_dotenv
-from openai import APIError, APITimeoutError, OpenAI
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from openai import APIError, APITimeoutError, AsyncOpenAI
 
 # ─────────────────────────────────────────────
 # 0. Environment — load .env before anything else
@@ -87,19 +81,20 @@ AGENT_MODELS: dict[str, list[str]] = {
         "qwen/qwen3-next-80b-a3b-instruct:free",
     ],
     AgentName.CODER: [
+        "cohere/north-mini-code:free",
         "poolside/laguna-m.1:free",
         "openai/gpt-oss-120b:free",
-        "cohere/north-mini-code:free",
     ],
     AgentName.TESTER: [
-        "qwen/qwen3-next-80b-a3b-instruct:free",
         "cohere/north-mini-code:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
         "openai/gpt-oss-120b:free",
     ],
     AgentName.DEBUGGER: [
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "poolside/laguna-m.1:free",
+        "google/gemma-4-31b-it:free",
         "cohere/north-mini-code:free",
+        "openai/gpt-oss-120b:free",
+        "poolside/laguna-m.1:free",
     ],
     AgentName.REVIEWER: [
         "google/gemma-4-31b-it:free",
@@ -118,72 +113,78 @@ _OPENROUTER_HEADERS: dict[str, str] = {
     "X-Title": "Agentic Platform",
 }
 
-_client: Optional[OpenAI] = None
+_async_client: Optional[AsyncOpenAI] = None
 
 
-def get_client() -> OpenAI:
-    global _client
-    if _client is None:
+def get_async_client() -> AsyncOpenAI:
+    global _async_client
+    if _async_client is None:
         api_key = os.getenv("OPENROUTER_API_KEY", "")
         if not api_key:
             raise EnvironmentError(
                 "OPENROUTER_API_KEY is missing. Add it to your .env file."
             )
-        _client = OpenAI(
+        _async_client = AsyncOpenAI(
             api_key=api_key,
             base_url=_OPENROUTER_BASE_URL,
             default_headers=_OPENROUTER_HEADERS,
             timeout=120.0,
             max_retries=0,
         )
-    return _client
+    return _async_client
 
 
 # ─────────────────────────────────────────────
 # 6. LLM Call — retry + primary/fallback routing
 # ─────────────────────────────────────────────
 _RETRYABLE_ERRORS = (APITimeoutError, APIError)
+_MAX_RETRIES = 3
+_RETRY_WAIT_BASE = 4  # seconds
 
 
-def _make_retrying_call(
+async def _make_retrying_call(
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int,
     run_id: Optional[str],
 ) -> dict[str, object]:
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=4, max=30),
-        retry=retry_if_exception_type(_RETRYABLE_ERRORS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-    )
-    def _call() -> dict[str, object]:
-        t0 = time.perf_counter()
-        response = get_client().chat.completions.create(
-            model=model,
-            messages=messages,  # type: ignore[arg-type]
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        latency_ms = round((time.perf_counter() - t0) * 1000)
-        content = response.choices[0].message.content or ""
-        usage   = response.usage
-        return {
-            "content":           content,
-            "model_used":        model,
-            "prompt_tokens":     usage.prompt_tokens     if usage else 0,
-            "completion_tokens": usage.completion_tokens if usage else 0,
-            "total_tokens":      usage.total_tokens      if usage else 0,
-            "latency_ms":        latency_ms,
-            "run_id":            run_id,
-        }
+    last_err: Exception | None = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            t0 = time.perf_counter()
+            response = await get_async_client().chat.completions.create(
+                model=model,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            latency_ms = round((time.perf_counter() - t0) * 1000)
+            content = response.choices[0].message.content or ""
+            usage   = response.usage
+            return {
+                "content":           content,
+                "model_used":        model,
+                "prompt_tokens":     usage.prompt_tokens     if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens":      usage.total_tokens      if usage else 0,
+                "latency_ms":        latency_ms,
+                "run_id":            run_id,
+            }
+        except _RETRYABLE_ERRORS as err:
+            last_err = err
+            if attempt < _MAX_RETRIES:
+                wait = min(_RETRY_WAIT_BASE * (2 ** (attempt - 1)), 30)
+                logger.warning(
+                    "LLM retry %d/%d | model=%s error=%s wait=%ss",
+                    attempt, _MAX_RETRIES, model, err, wait,
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
 
-    return _call()  # type: ignore[return-value]
 
-
-def call_llm(
+async def call_llm(
     agent: AgentName,
     messages: list[dict[str, str]],
     *,
@@ -200,7 +201,7 @@ def call_llm(
 
     for i, model in enumerate(models):
         try:
-            result = _make_retrying_call(model, messages, temperature, max_tokens, run_id)
+            result = await _make_retrying_call(model, messages, temperature, max_tokens, run_id)
             logger.info(
                 "LLM OK | agent=%s model=%s tokens=%s latency=%sms run_id=%s",
                 agent.value, result["model_used"],

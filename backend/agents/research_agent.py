@@ -137,7 +137,7 @@ def _parse_research_output(raw: str) -> dict[str, Any]:
         }
 
 
-def _extract_queries_from_prd(prd_text: str, run_id: str) -> tuple[list[str], int]:
+async def _extract_queries_from_prd(prd_text: str, run_id: str) -> tuple[list[str], int]:
     """
     Use a lightweight LLM call to extract clean search queries from the PRD
     instead of blindly slicing the raw text.
@@ -145,7 +145,7 @@ def _extract_queries_from_prd(prd_text: str, run_id: str) -> tuple[list[str], in
     Returns (queries, tokens_used).
     """
     try:
-        result = call_llm(
+        result = await call_llm(
             agent=AgentName.RESEARCH,
             messages=build_messages(
                 _QUERY_EXTRACTION_SYSTEM,
@@ -193,7 +193,7 @@ async def run(state: AutoDevState) -> AutoDevState:
     run_id = state["run_id"]
 
     # ── Step 1: Extract search queries via LLM ────────────────────────────────
-    queries, extraction_tokens = _extract_queries_from_prd(prd, run_id)
+    queries, extraction_tokens = await _extract_queries_from_prd(prd, run_id)
     state["total_tokens"] = state.get("total_tokens", 0) + extraction_tokens
     log(state, "Research", f"Running {len(queries)} Tavily searches: {queries}")
 
@@ -231,7 +231,7 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     log(state, "Research", "Calling LLM for structured research output")
     try:
-        llm_result = call_llm(
+        llm_result = await call_llm(
             agent=AgentName.RESEARCH,
             messages=messages,
             temperature=0.1,        # low temp = more deterministic JSON

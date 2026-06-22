@@ -23,6 +23,7 @@ Writes : state["code_files"], state["sandbox_folder"], state["total_tokens"]
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -241,7 +242,7 @@ async def run(state: AutoDevState) -> AutoDevState:
         messages = build_messages(_SYSTEM_PROMPT, user_prompt)
 
         try:
-            llm_result = call_llm(
+            llm_result = await call_llm(
                 agent=AgentName.CODER,
                 messages=messages,
                 temperature=0.1,
@@ -270,7 +271,7 @@ async def run(state: AutoDevState) -> AutoDevState:
 
     # ── Step 4: Write to sandbox folder ───────────────────────────────────────
     project_name = task_plan.get("project_name", "project")
-    sandbox_folder = _write_to_sandbox(code_files, project_name)
+    sandbox_folder = await asyncio.to_thread(_write_to_sandbox, code_files, project_name)
 
     # ── Save to state ─────────────────────────────────────────────────────────
     state["code_files"] = code_files

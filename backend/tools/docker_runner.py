@@ -22,8 +22,8 @@ Docker must be installed and running on the host machine.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +36,7 @@ logger = logging.getLogger("agentic-platform")
 # 1. Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_code_in_sandbox(
+async def run_code_in_sandbox(
     sandbox_folder: str,
     *,
     test_command: str = "python -m pytest tests/ -v --tb=short",
@@ -73,7 +73,7 @@ def run_code_in_sandbox(
         f"{test_command}"
     )
 
-    docker_cmd = [
+    docker_args = [
         "docker", "run", "--rm",
         # ── Resource limits ──
         f"--memory={settings.sandbox_memory_mb}m",
@@ -100,18 +100,21 @@ def run_code_in_sandbox(
     )
 
     try:
-        result = subprocess.run(
-            docker_cmd,
-            capture_output=True,
-            text=True,
-            timeout=total_timeout,
+        proc = await asyncio.create_subprocess_exec(
+            *docker_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        stdout = result.stdout
-        stderr = result.stderr
-        exit_code = result.returncode
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=total_timeout
+        )
+        stdout = stdout_bytes.decode() if stdout_bytes else ""
+        stderr = stderr_bytes.decode() if stderr_bytes else ""
+        exit_code = proc.returncode or 0
 
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         logger.warning("Docker run timed out after %ss", total_timeout)
+        proc.kill()
         return _error_result(
             "TIMEOUT", f"Execution timed out after {total_timeout}s"
         )

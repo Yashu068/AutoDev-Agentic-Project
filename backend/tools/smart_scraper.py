@@ -54,8 +54,8 @@ def _get_tavily():
 def _get_firecrawl():
     global _firecrawl
     if _firecrawl is None:
-        from firecrawl import FirecrawlApp
-        _firecrawl = FirecrawlApp(api_key=settings.firecrawl_api_key)
+        from firecrawl import Firecrawl
+        _firecrawl = Firecrawl(api_key=settings.firecrawl_api_key)
     return _firecrawl
 
 
@@ -166,9 +166,9 @@ async def scrape_urls(urls: list[str]) -> list[dict[str, str]]:
 def _firecrawl_scrape(url: str) -> str:
     """Firecrawl se URL ko clean markdown mein convert karo."""
     try:
-        result = _get_firecrawl().scrape_url(
+        result = _get_firecrawl().scrape(
             url,
-            params={"formats": ["markdown"]},
+            formats=["markdown"],
         )
         content = result.get("markdown", "") or ""
         logger.info("Firecrawl scrape OK | url=%s chars=%d", url, len(content))
