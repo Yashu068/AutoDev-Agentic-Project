@@ -89,6 +89,7 @@ class Run(Base):
     # ── Debug metadata ────────────────────────────────────────────────────────
     retry_count:  Mapped[int] = mapped_column(Integer, default=0)
     error_trace:  Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_completed_node: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # ── Observability ─────────────────────────────────────────────────────────
     logs:          Mapped[list | None] = mapped_column(ARRAY(Text), nullable=True, default=list)
@@ -138,6 +139,7 @@ async def save_run_from_state(session, state: dict) -> Run:
     run.download_url    = state.get("download_url")
     run.retry_count     = state.get("retry_count", 0)
     run.error_trace     = state.get("error_trace")
+    run.last_completed_node = state.get("last_completed_node")
     run.logs            = state.get("logs", [])
     run.total_tokens    = state.get("total_tokens", 0)
 

@@ -1,0 +1,36 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #f0f0f0;
+    font-family: Arial, sans-serif;
+}
+
+#game-canvas {
+    border: 1px solid #000;
+    background-color: #000;
+}
+
+.game-container {
+    width: 800px;
+    height: 600px;
+    margin: 40px auto;
+    text-align: center;
+}
+
+.score {
+    font-size: 24px;
+    color: #fff;
+    position: absolute;
+    top: 10px;
+    left: 10px;
+}
+
+.game-over {
+    font-size: 48px;
+    color: #fff;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+}

@@ -32,7 +32,7 @@ import logging
 import re
 
 from config import AgentName, build_messages, call_llm
-from graph.state import AutoDevState, log
+from graph.state import AutoDevState, RunStatus, log
 
 logger = logging.getLogger("agentic-platform")
 
@@ -316,7 +316,7 @@ async def run(state: AutoDevState) -> AutoDevState:
             )
         except RuntimeError as e:
             log(state, "Debugger", f"LLM call failed: {e}")
-            state["retry_count"] += 1
+            state["status"] = RunStatus.FAILED  # stop the debug loop
             state["total_tokens"] = total_tokens
             return state
 
@@ -351,7 +351,7 @@ async def run(state: AutoDevState) -> AutoDevState:
             )
         except RuntimeError as e:
             log(state, "Debugger", f"LLM call failed: {e}")
-            state["retry_count"] += 1
+            state["status"] = RunStatus.FAILED  # stop the debug loop
             state["total_tokens"] = total_tokens
             return state
 

@@ -161,6 +161,53 @@ async def delete_project(run_id: str, db: AsyncSession = Depends(get_db)):
     return {"success": True, "message": f"Run {run_id} deleted successfully"}
 
 
+@router.post("/projects/{run_id}/retry")
+async def retry_project(run_id: str):
+    """Retry a FAILED or ESCALATED run from where it left off."""
+    run = await get_run_from_db(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND", "message": "Run does not exist"})
+
+    if run.status not in ("failed", "escalated"):
+        raise HTTPException(status_code=400, detail={
+            "code": "NOT_RETRYABLE",
+            "message": f"Run status is '{run.status}' — only failed/escalated runs can be retried",
+        })
+
+    # Rebuild state from DB row
+    saved_state = create_initial_state(run_id=str(run.id), user_id=run.user_id, prd_text=run.prd_text)
+    saved_state["research_output"] = run.research_output
+    saved_state["task_plan"] = run.task_plan
+    saved_state["code_files"] = run.code_files
+    saved_state["test_results"] = run.test_results
+    saved_state["review_result"] = run.review_result
+    saved_state["download_url"] = run.download_url
+    saved_state["retry_count"] = run.retry_count
+    saved_state["error_trace"] = run.error_trace
+    saved_state["last_completed_node"] = run.last_completed_node
+    saved_state["logs"] = list(run.logs or [])
+    saved_state["total_tokens"] = run.total_tokens or 0
+
+    # Fire-and-forget: resume pipeline in background
+    asyncio.create_task(_resume_pipeline_background(run_id, saved_state))
+
+    logger.info("Run retry started | run_id=%s last_completed=%s", run_id, run.last_completed_node)
+    return {"success": True, "run_id": run_id, "message": f"Resuming from after '{run.last_completed_node or 'start'}'"}
+
+
+async def _resume_pipeline_background(run_id: str, state: dict) -> None:
+    """Resume pipeline in background. Saves final state to DB."""
+    try:
+        from graph.orchestrator import resume_pipeline
+        final_state = await resume_pipeline(state)
+        await save_state_to_db(final_state)
+    except Exception as exc:
+        logger.error("Resume pipeline crashed | run_id=%s error=%s", run_id, exc)
+        state["status"] = RunStatus.FAILED
+        state["logs"].append(f"[FATAL] Resume crashed: {exc}")
+        await save_state_to_db(state)
+
+
 @router.get("/projects/{run_id}/logs")
 async def get_run_logs(run_id: str):
     """Get execution logs for a run."""

@@ -79,7 +79,7 @@ The system contains six autonomous agents, each having a dedicated and isolated 
     *   Analyze third-party APIs.
     *   Gather implementation details.
     *   Generate structured research output.
-*   **LLM**: `Gemma 4 31B` (via OpenRouter)
+*   **LLMs**: `gemini-2.5-flash` (Gemini), `llama-3.3-70b-versatile` (Groq), `gemma-4-31b-it:free` (OpenRouter)
 *   **Tools**: Tavily, Firecrawl, BeautifulSoup
 *   **Output Shape**:
     ```json
@@ -99,7 +99,7 @@ The system contains six autonomous agents, each having a dedicated and isolated 
     *   Create folder and file structures.
     *   Define implementation order.
     *   Generate file blueprints.
-*   **LLM**: `Nemotron 3 Super` (via OpenRouter) | *Fallback*: `gpt-oss-120b`
+*   **LLMs**: `gemini-2.5-flash` (Gemini), `llama-3.3-70b-versatile` (Groq), `nemotron-3-super-120b-a12b:free` (OpenRouter)
 *   **Validation**: Pydantic validation
 *   **Output Shape**:
     ```json
@@ -118,7 +118,7 @@ The system contains six autonomous agents, each having a dedicated and isolated 
     *   Generate optimized code.
     *   Maintain a growing code context.
     *   Strictly follow planner instructions.
-*   **LLM**: `Poolside Laguna M.1` (via OpenRouter) | *Fallback*: `gpt-oss-120b`
+*   **LLMs**: `llama-3.3-70b-versatile` (Groq), `gemini-2.5-flash` (Gemini), `north-mini-code:free` (OpenRouter)
 *   **Tools**: `os`, `pathlib`, `tempfile`
 *   **Important Rule**: 
     > [!IMPORTANT]
@@ -131,7 +131,7 @@ The system contains six autonomous agents, each having a dedicated and isolated 
     *   Execute tests.
     *   Collect failure traces.
     *   Produce execution reports.
-*   **LLM**: `Llama 3.3 70B` (via OpenRouter)
+*   **LLMs**: `llama-3.3-70b-versatile` (Groq), `gemini-2.5-flash` (Gemini), `qwen3-next-80b-a3b-instruct:free` (OpenRouter)
 *   **Tools**: Docker Sandbox, Pytest
 *   **Security Constraints**:
     *   *Internet Access*: Disabled
@@ -146,7 +146,7 @@ The system contains six autonomous agents, each having a dedicated and isolated 
     *   Identify root causes.
     *   Fix exactly one file at a time.
     *   Retry execution.
-*   **LLM**: `Nemotron 3 Super` (via OpenRouter) | *Fallback*: `gpt-oss-120b`
+*   **LLMs**: `gemini-2.5-flash` (Gemini), `llama-3.3-70b-versatile` (Groq), `gemma-4-31b-it:free` (OpenRouter)
 *   **Validation**: AST Parsing
 *   **Retry Policy**:
     *   *Maximum Retries* = 3
@@ -160,7 +160,7 @@ The system contains six autonomous agents, each having a dedicated and isolated 
     *   Generate quality score and report.
     *   Package ZIP.
     *   Save metadata.
-*   **LLM**: `Gemma 4 31B` (via OpenRouter)
+*   **LLMs**: `llama-3.3-70b-versatile` (Groq), `gemini-2.5-flash` (Gemini), `gemma-4-31b-it:free` (OpenRouter)
 *   **Tools**: Ruff, ESLint, ZIP Packaging, PostgreSQL
 
 ---
@@ -208,7 +208,7 @@ class AutoDevState(TypedDict):
 | **Frontend** | React, Vite |
 | **Database** | PostgreSQL, pgAdmin |
 | **Sandbox** | Docker |
-| **LLM Gateway** | OpenRouter |
+| **LLM Gateway** | Gemini, Groq, OpenRouter (automatic fallback) |
 
 ---
 
@@ -218,6 +218,8 @@ Create a `.env` file in the root directory and add the following keys:
 
 ```bash
 # LLM & Third Party API Keys
+GEMINI_API_KEY=your_gemini_api_key
+GROQ_API_KEY=your_groq_api_key
 OPENROUTER_API_KEY=your_openrouter_api_key
 TAVILY_API_KEY=your_tavily_api_key
 FIRECRAWL_API_KEY=your_firecrawl_api_key
@@ -290,8 +292,8 @@ project/
 > These decisions are final, structural guidelines and **must not be changed**.
 
 ### Fixed Requirements
-1. **All LLMs** must be accessed through **OpenRouter**.
-2. A single OpenRouter API key must be used.
+1. **Multi-Provider LLM Routing**: Supports Gemini, Groq, and OpenRouter with automatic failover/fallback logic.
+2. At least one API key from the supported LLM providers (Gemini, Groq, OpenRouter) must be configured.
 3. **Docker sandbox** is strictly mandatory for test execution.
 4. **Pydantic validation** is required for inputs and schema integrity.
 5. **AST validation** is required for all debugger actions.
@@ -344,7 +346,7 @@ When working on this repository, you **must adhere to these instructions strictl
 source .venv/bin/activate
 
 # 2. Phir requirements ko install karein
-pip install -r backend/requirements.txt
+pip install -r requirements.txt
 
 
 # to start backend

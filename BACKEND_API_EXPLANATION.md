@@ -58,7 +58,7 @@ sequenceDiagram
     Host->>App: Start App Lifecycle (uvicorn api.main:app)
     activate App
     App->>Env: validate_environment()
-    note over Env: Verify presence of keys:<br/>OPENROUTER_API_KEY,<br/>TAVILY_API_KEY,<br/>LANGCHAIN_API_KEY
+    note over Env: Verify presence of keys:<br/>GEMINI_API_KEY, GROQ_API_KEY, or<br/>OPENROUTER_API_KEY (at least one),<br/>TAVILY_API_KEY, LANGCHAIN_API_KEY
     Env-->>App: Environment OK
     App->>DB: init_db()
     activate DB

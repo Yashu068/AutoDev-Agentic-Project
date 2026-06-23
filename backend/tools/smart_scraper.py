@@ -170,7 +170,12 @@ def _firecrawl_scrape(url: str) -> str:
             url,
             formats=["markdown"],
         )
-        content = result.get("markdown", "") or ""
+        content = ""
+        if result is not None:
+            if hasattr(result, "get"):
+                content = result.get("markdown", "") or ""
+            else:
+                content = getattr(result, "markdown", "") or ""
         logger.info("Firecrawl scrape OK | url=%s chars=%d", url, len(content))
         return content[:_MAX_SCRAPE_CHARS]
 

@@ -102,6 +102,7 @@ class AutoDevState(TypedDict):
 
     # ── Metadata ─────────────────────────────────────────────────────────────
     status:          RunStatus
+    last_completed_node: Optional[str]              # for resumable pipeline
     logs:            List[str]                  # append-only list of log lines
     total_tokens:    int                        # cumulative across all LLM calls
 
@@ -135,6 +136,7 @@ def create_initial_state(run_id: str, user_id: str, prd_text: str) -> AutoDevSta
         download_url=None,
 
         status=RunStatus.PENDING,
+        last_completed_node=None,
         logs=[],
         total_tokens=0,
     )
@@ -156,7 +158,12 @@ def log(state: AutoDevState, agent: str, message: str) -> None:
     # Save the updated state to the database in the background event loop
     try:
         import asyncio
-        from tools.db_delivery import save_state_to_db
-        asyncio.create_task(save_state_to_db(dict(state)))
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            from tools.db_delivery import save_state_to_db
+            loop.create_task(save_state_to_db(dict(state)))
+    except RuntimeError:
+        # get_running_loop() raises RuntimeError if there's no running event loop
+        pass
     except Exception:
         pass

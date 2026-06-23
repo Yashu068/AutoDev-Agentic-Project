@@ -68,92 +68,172 @@ class AgentName(str, Enum):
 
 # ─────────────────────────────────────────────
 # 4. Model Registry — ordered list per agent (tried sequentially)
+#    Prefix format: "provider/model-name"
+#    Providers: gemini, groq, openrouter
 # ─────────────────────────────────────────────
 AGENT_MODELS: dict[str, list[str]] = {
+    # Research: needs large context + good summarization
     AgentName.RESEARCH: [
-        "google/gemma-4-31b-it:free",
-        "openai/gpt-oss-120b:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "gemini/gemini-2.5-flash",
+        "groq/llama-3.3-70b-versatile",
+        "openrouter/google/gemma-4-31b-it:free",
     ],
+    # Planner: needs strong reasoning + reliable JSON output
     AgentName.PLANNER: [
-        "nvidia/nemotron-3-super-120b-a12b:free",
-        "google/gemma-4-31b-it:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "gemini/gemini-2.5-flash",
+        "groq/llama-3.3-70b-versatile",
+        "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
     ],
+    # Coder: needs strong code generation
     AgentName.CODER: [
-        "cohere/north-mini-code:free",
-        "poolside/laguna-m.1:free",
-        "openai/gpt-oss-120b:free",
+        "groq/llama-3.3-70b-versatile",
+        "gemini/gemini-2.5-flash",
+        "openrouter/cohere/north-mini-code:free",
     ],
+    # Tester: needs code understanding + test generation
     AgentName.TESTER: [
-        "cohere/north-mini-code:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "openai/gpt-oss-120b:free",
+        "groq/llama-3.3-70b-versatile",
+        "gemini/gemini-2.5-flash",
+        "openrouter/qwen/qwen3-next-80b-a3b-instruct:free",
     ],
+    # Debugger: needs reasoning over tracebacks + targeted code fixes
     AgentName.DEBUGGER: [
-        "google/gemma-4-31b-it:free",
-        "cohere/north-mini-code:free",
-        "openai/gpt-oss-120b:free",
-        "poolside/laguna-m.1:free",
+        "gemini/gemini-2.5-flash",
+        "groq/llama-3.3-70b-versatile",
+        "openrouter/google/gemma-4-31b-it:free",
     ],
+    # Reviewer: needs evaluation + structured JSON scoring
     AgentName.REVIEWER: [
-        "google/gemma-4-31b-it:free",
-        "openai/gpt-oss-120b:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
+        "groq/llama-3.3-70b-versatile",
+        "gemini/gemini-2.5-flash",
+        "openrouter/google/gemma-4-31b-it:free",
     ],
 }
 
 
 # ─────────────────────────────────────────────
-# 5. OpenRouter Client (singleton)
+# 5. Multi-Provider Client Factory
+#    Supported: openrouter, gemini, groq
 # ─────────────────────────────────────────────
-_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-_OPENROUTER_HEADERS: dict[str, str] = {
-    "HTTP-Referer": "https://agentic-platform.dev",
-    "X-Title": "Agentic Platform",
+_PROVIDER_CONFIG = {
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "env_key": "OPENROUTER_API_KEY",
+        "default_headers": {
+            "HTTP-Referer": "https://agentic-platform.dev",
+            "X-Title": "Agentic Platform",
+        },
+    },
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "env_key": "GEMINI_API_KEY",
+        "default_headers": {},
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "env_key": "GROQ_API_KEY",
+        "default_headers": {},
+    },
 }
 
-_async_client: Optional[AsyncOpenAI] = None
+_clients: dict[str, AsyncOpenAI] = {}
 
 
-def get_async_client() -> AsyncOpenAI:
-    global _async_client
-    if _async_client is None:
-        api_key = os.getenv("OPENROUTER_API_KEY", "")
-        if not api_key:
-            raise EnvironmentError(
-                "OPENROUTER_API_KEY is missing. Add it to your .env file."
-            )
-        _async_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=_OPENROUTER_BASE_URL,
-            default_headers=_OPENROUTER_HEADERS,
-            timeout=120.0,
-            max_retries=0,
+def _get_client(provider: str) -> AsyncOpenAI:
+    """Get or create a cached AsyncOpenAI client for the given provider."""
+    if provider in _clients:
+        return _clients[provider]
+
+    cfg = _PROVIDER_CONFIG.get(provider)
+    if not cfg:
+        raise ValueError(f"Unknown LLM provider: {provider}")
+
+    api_key = os.getenv(cfg["env_key"], "")
+    if not api_key:
+        raise EnvironmentError(
+            f"{cfg['env_key']} is missing. Add it to your .env file."
         )
-    return _async_client
+
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=cfg["base_url"],
+        default_headers=cfg["default_headers"] or None,
+        timeout=120.0,
+        max_retries=0,
+    )
+    _clients[provider] = client
+    return client
+
+
+def _parse_model_string(prefixed_model: str) -> tuple[str, str]:
+    """
+    Parse 'provider/model-name' → (provider, model_name).
+    For openrouter models the model name itself contains slashes,
+    e.g. 'openrouter/google/gemma-4-31b-it:free' → ('openrouter', 'google/gemma-4-31b-it:free').
+    """
+    for provider in _PROVIDER_CONFIG:
+        prefix = f"{provider}/"
+        if prefixed_model.startswith(prefix):
+            return provider, prefixed_model[len(prefix):]
+    # No prefix → default to openrouter (backward compat)
+    return "openrouter", prefixed_model
+
+
+# Backward-compatible alias used nowhere else but kept for safety
+def get_async_client() -> AsyncOpenAI:
+    return _get_client("openrouter")
 
 
 # ─────────────────────────────────────────────
-# 6. LLM Call — retry + primary/fallback routing
+# 6. LLM Call — retry + multi-provider fallback
 # ─────────────────────────────────────────────
 _RETRYABLE_ERRORS = (APITimeoutError, APIError)
 _MAX_RETRIES = 3
 _RETRY_WAIT_BASE = 4  # seconds
 
 
+class DailyQuotaExhausted(Exception):
+    """Raised when OpenRouter daily free-model quota (50/day) is used up."""
+    pass
+
+
+def _parse_429_error(err: APIError) -> tuple[bool, int]:
+    """
+    Parse a 429 error to determine type and wait time.
+    Returns (is_daily_quota, retry_after_seconds).
+    """
+    err_str = str(err)
+
+    # Daily quota — no point retrying or switching models
+    if "free-models-per-day" in err_str:
+        return True, 0
+
+    # Temporary upstream throttle — parse retry_after from error body
+    retry_after = 0
+    try:
+        body = err.body or {}
+        metadata = body.get("error", {}).get("metadata", {})
+        retry_after = int(metadata.get("retry_after_seconds", 0))
+    except (AttributeError, TypeError, ValueError):
+        pass
+
+    return False, retry_after
+
+
 async def _make_retrying_call(
+    provider: str,
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int,
     run_id: Optional[str],
 ) -> dict[str, object]:
+    client = _get_client(provider)
     last_err: Exception | None = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
             t0 = time.perf_counter()
-            response = await get_async_client().chat.completions.create(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=messages,  # type: ignore[arg-type]
                 temperature=temperature,
@@ -164,7 +244,7 @@ async def _make_retrying_call(
             usage   = response.usage
             return {
                 "content":           content,
-                "model_used":        model,
+                "model_used":        f"{provider}/{model}",
                 "prompt_tokens":     usage.prompt_tokens     if usage else 0,
                 "completion_tokens": usage.completion_tokens if usage else 0,
                 "total_tokens":      usage.total_tokens      if usage else 0,
@@ -173,11 +253,35 @@ async def _make_retrying_call(
             }
         except _RETRYABLE_ERRORS as err:
             last_err = err
+
+            # ── Smart 429 handling ────────────────────────────────────
+            if isinstance(err, APIError) and err.status_code == 429:
+                is_daily, retry_after = _parse_429_error(err)
+
+                # Daily quota exhausted (OpenRouter-specific) — fail to next model
+                if is_daily:
+                    logger.error(
+                        "Daily quota exhausted | provider=%s model=%s run_id=%s",
+                        provider, model, run_id,
+                    )
+                    raise DailyQuotaExhausted(str(err)) from err
+
+                # Temporary throttle — use server's Retry-After if available
+                if retry_after > 0 and attempt < _MAX_RETRIES:
+                    wait = min(retry_after + 1, 120)
+                    logger.warning(
+                        "LLM retry %d/%d | provider=%s model=%s wait=%ss (Retry-After)",
+                        attempt, _MAX_RETRIES, provider, model, wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+
+            # ── Default backoff for non-429 errors ────────────────────
             if attempt < _MAX_RETRIES:
                 wait = min(_RETRY_WAIT_BASE * (2 ** (attempt - 1)), 30)
                 logger.warning(
-                    "LLM retry %d/%d | model=%s error=%s wait=%ss",
-                    attempt, _MAX_RETRIES, model, err, wait,
+                    "LLM retry %d/%d | provider=%s model=%s error=%s wait=%ss",
+                    attempt, _MAX_RETRIES, provider, model, err, wait,
                 )
                 await asyncio.sleep(wait)
             else:
@@ -195,30 +299,52 @@ async def call_llm(
     """
     Public interface for all agent LLM calls.
     Tries each model in AGENT_MODELS[agent] sequentially until one succeeds.
+    Automatically skips models whose provider API key is not configured.
     """
     models = AGENT_MODELS[agent]
     last_err: Exception | None = None
 
-    for i, model in enumerate(models):
+    for i, prefixed_model in enumerate(models):
+        provider, model_name = _parse_model_string(prefixed_model)
+
+        # Skip if API key for this provider is not set
+        env_key = _PROVIDER_CONFIG[provider]["env_key"]
+        if not os.getenv(env_key, ""):
+            logger.warning(
+                "Skipping model %s — %s not configured | agent=%s",
+                prefixed_model, env_key, agent.value,
+            )
+            continue
+
         try:
-            result = await _make_retrying_call(model, messages, temperature, max_tokens, run_id)
+            result = await _make_retrying_call(
+                provider, model_name, messages, temperature, max_tokens, run_id,
+            )
             logger.info(
-                "LLM OK | agent=%s model=%s tokens=%s latency=%sms run_id=%s",
-                agent.value, result["model_used"],
+                "LLM OK | agent=%s provider=%s model=%s tokens=%s latency=%sms run_id=%s",
+                agent.value, provider, result["model_used"],
                 result["total_tokens"], result["latency_ms"], run_id,
             )
             return result
+        except DailyQuotaExhausted:
+            # OpenRouter daily limit — try next model (possibly different provider)
+            logger.warning(
+                "OpenRouter daily quota hit — trying next model | agent=%s model=%s",
+                agent.value, prefixed_model,
+            )
+            last_err = RuntimeError("OpenRouter daily quota exhausted")
+            continue
         except Exception as err:
             last_err = err
             if i < len(models) - 1:
                 logger.warning(
-                    "LLM model %d/%d failed — trying next | agent=%s model=%s error=%s",
-                    i + 1, len(models), agent.value, model, err,
+                    "LLM model %d/%d failed — trying next | agent=%s provider=%s model=%s error=%s",
+                    i + 1, len(models), agent.value, provider, prefixed_model, err,
                 )
             else:
                 logger.error(
                     "LLM FAILED (all %d models) | agent=%s last_model=%s error=%s",
-                    len(models), agent.value, model, err,
+                    len(models), agent.value, prefixed_model, err,
                 )
 
     raise RuntimeError(
@@ -245,9 +371,14 @@ def build_messages(
 # 8. Environment validation — call once at app startup
 # ─────────────────────────────────────────────
 REQUIRED_ENV_VARS: list[str] = [
-    "OPENROUTER_API_KEY",
     "TAVILY_API_KEY",
     "LANGCHAIN_API_KEY",
+]
+
+_LLM_KEY_VARS: list[str] = [
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "GROQ_API_KEY",
 ]
 
 
@@ -259,7 +390,17 @@ def validate_environment() -> None:
             f"Missing required environment variables: {', '.join(missing)}. "
             "Check your .env file."
         )
-    logger.info("Environment validated — all required keys present.")
+
+    # At least one LLM provider key must be set
+    has_llm_key = any(os.getenv(k) for k in _LLM_KEY_VARS)
+    if not has_llm_key:
+        raise EnvironmentError(
+            "No LLM provider API key found. Set at least one of: "
+            f"{', '.join(_LLM_KEY_VARS)} in your .env file."
+        )
+
+    configured = [k for k in _LLM_KEY_VARS if os.getenv(k)]
+    logger.info("Environment validated — LLM providers: %s", ', '.join(configured))
 
 
 # ─────────────────────────────────────────────
@@ -269,6 +410,8 @@ def validate_environment() -> None:
 class Settings:
     # API keys
     openrouter_api_key: str   = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
+    gemini_api_key:     str   = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
+    groq_api_key:       str   = field(default_factory=lambda: os.getenv("GROQ_API_KEY", ""))
     tavily_api_key:     str   = field(default_factory=lambda: os.getenv("TAVILY_API_KEY", ""))
     firecrawl_api_key:  str   = field(default_factory=lambda: os.getenv("FIRECRAWL_API_KEY", ""))
     langchain_api_key:  str   = field(default_factory=lambda: os.getenv("LANGCHAIN_API_KEY", ""))
