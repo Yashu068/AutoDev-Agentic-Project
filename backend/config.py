@@ -421,7 +421,7 @@ class Settings:
     redis_url:          str   = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379"))
 
     # Docker sandbox hard limits
-    sandbox_memory_mb:  int   = 256
+    sandbox_memory_mb:  int   = 1024
     sandbox_timeout_s:  int   = 30
     sandbox_cpu_quota:  int   = 50000   # 50% of one CPU core
 

@@ -135,7 +135,8 @@ The system contains six autonomous agents, each having a dedicated and isolated 
 *   **Tools**: Docker Sandbox, Pytest
 *   **Security Constraints**:
     *   *Internet Access*: Disabled
-    *   *RAM Limit*: 256 MB
+    *   Private Registry/Cache: None
+    *   *RAM Limit*: 1024 MB
     *   *Timeout*: 30 Seconds
     *   *Execution Environment*: Isolated Container
 
