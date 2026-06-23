@@ -198,6 +198,7 @@ export default function App() {
   const [isCreating, setIsCreating] = useState(false);
   const [backendHealthy, setBackendHealthy] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // UI Tabs and Interactive States
   const [activeCodeFile, setActiveCodeFile] = useState(null);
@@ -266,6 +267,31 @@ export default function App() {
     } catch (err) {
       console.error('Failed to delete run:', err);
       alert('Error connecting to backend API');
+    }
+  };
+
+  const handleRetryRun = async () => {
+    if (!activeRunId || isRetrying) return;
+    setIsRetrying(true);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${activeRunId}/retry`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Immediately fetch details to update status and trigger polling
+        const runRes = await fetch(`${API_BASE}/projects/${activeRunId}`);
+        const runData = await runRes.json();
+        setActiveRunDetails(runData);
+        await fetchHistory(); // refresh sidebar list
+      } else {
+        alert(data.error || 'Failed to retry pipeline');
+      }
+    } catch (err) {
+      console.error('Failed to retry pipeline:', err);
+      alert('Error connecting to backend API');
+    } finally {
+      setIsRetrying(false);
     }
   };
 
@@ -542,11 +568,26 @@ export default function App() {
                 { name: 'Deliver', label: 'Complete' }
               ].map((step, idx) => {
                 let statusClass = '';
-                if (idx < currentStepIdx) statusClass = 'completed';
-                else if (idx === currentStepIdx) {
-                  if (activeRunDetails?.status === 'completed') statusClass = 'completed';
-                  else if (activeRunDetails?.status === 'failed' || activeRunDetails?.status === 'escalated') statusClass = 'failed';
-                  else statusClass = 'active';
+                if (activeRunDetails) {
+                  const status = activeRunDetails.status;
+                  if (status === 'completed') {
+                    statusClass = 'completed';
+                  } else if (status === 'failed' || status === 'escalated') {
+                    const lastNode = activeRunDetails.last_completed_node;
+                    let failedIdx = 0; // Default to Research
+                    if (lastNode === 'research') failedIdx = 1;
+                    else if (lastNode === 'planner') failedIdx = 2;
+                    else if (lastNode === 'coder') failedIdx = 3;
+                    else if (lastNode === 'tester') failedIdx = 4;
+                    else if (lastNode === 'reviewer') failedIdx = 5;
+
+                    if (idx < failedIdx) statusClass = 'completed';
+                    else if (idx === failedIdx) statusClass = 'failed';
+                    else statusClass = '';
+                  } else {
+                    if (idx < currentStepIdx) statusClass = 'completed';
+                    else if (idx === currentStepIdx) statusClass = 'active';
+                  }
                 }
 
                 return (
@@ -575,6 +616,23 @@ export default function App() {
                     <div className="error-banner-body">
                       {activeRunDetails.error_trace || 'Pipeline failed with all configured fallback models. See console logs for details.'}
                     </div>
+                    <button 
+                      className="retry-action-btn"
+                      onClick={handleRetryRun}
+                      disabled={isRetrying}
+                    >
+                      {isRetrying ? (
+                        <>
+                          <div className="spinner" style={{ width: '12px', height: '12px', borderTopColor: 'var(--danger-color)', display: 'inline-block', verticalAlign: 'middle', marginRight: '6px' }} />
+                          Resuming Pipeline...
+                        </>
+                      ) : (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                          Retry Pipeline
+                        </>
+                      )}
+                    </button>
                   </div>
                 )}
 

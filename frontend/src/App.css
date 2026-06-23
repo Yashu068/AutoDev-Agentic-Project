@@ -1108,3 +1108,32 @@
 .step-node.failed .step-label {
   color: var(--danger-color);
 }
+
+.retry-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: all var(--transition-fast);
+  margin-top: 4px;
+}
+
+.retry-action-btn:hover:not(:disabled) {
+  background-color: var(--danger-color);
+  color: white;
+  border-color: var(--danger-color);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+}
+
+.retry-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -188,8 +188,10 @@ def get_async_client() -> AsyncOpenAI:
 # 6. LLM Call — retry + multi-provider fallback
 # ─────────────────────────────────────────────
 _RETRYABLE_ERRORS = (APITimeoutError, APIError)
-_MAX_RETRIES = 3
-_RETRY_WAIT_BASE = 4  # seconds
+_MAX_RETRIES = 3          # for non-429 errors (timeouts, 500s)
+_MAX_RPM_RETRIES = 3      # for 429 RPM — wait patiently, keep same model
+_RETRY_WAIT_BASE = 4      # seconds
+_DEFAULT_429_WAIT = 30    # fallback when no Retry-After is given
 
 
 class DailyQuotaExhausted(Exception):
@@ -201,21 +203,40 @@ def _parse_429_error(err: APIError) -> tuple[bool, int]:
     """
     Parse a 429 error to determine type and wait time.
     Returns (is_daily_quota, retry_after_seconds).
+    Works for all 3 providers: OpenRouter, Gemini, Groq.
     """
     err_str = str(err)
 
-    # Daily quota — no point retrying or switching models
-    if "free-models-per-day" in err_str:
+    # Daily quota — switch to next model
+    if "free-models-per-day" in err_str:          # OpenRouter
+        return True, 0
+    if "FreeTier" in err_str and "PerDay" in err_str:  # Gemini
+        return True, 0
+    if "per day" in err_str.lower():              # Groq
         return True, 0
 
-    # Temporary upstream throttle — parse retry_after from error body
     retry_after = 0
+
+    # 1. OpenRouter body metadata
     try:
         body = err.body or {}
         metadata = body.get("error", {}).get("metadata", {})
         retry_after = int(metadata.get("retry_after_seconds", 0))
     except (AttributeError, TypeError, ValueError):
         pass
+
+    # 2. Standard HTTP Retry-After header (Gemini, Groq)
+    if retry_after <= 0:
+        try:
+            header_val = err.response.headers.get("retry-after", "")
+            if header_val:
+                retry_after = int(header_val)
+        except (AttributeError, TypeError, ValueError):
+            pass
+
+    # 3. Default floor — any 429 should wait meaningfully
+    if retry_after <= 0:
+        retry_after = _DEFAULT_429_WAIT
 
     return False, retry_after
 
@@ -229,8 +250,10 @@ async def _make_retrying_call(
     run_id: Optional[str],
 ) -> dict[str, object]:
     client = _get_client(provider)
-    last_err: Exception | None = None
-    for attempt in range(1, _MAX_RETRIES + 1):
+    rpm_retries = 0
+    other_retries = 0
+
+    while True:
         try:
             t0 = time.perf_counter()
             response = await client.chat.completions.create(
@@ -252,13 +275,12 @@ async def _make_retrying_call(
                 "run_id":            run_id,
             }
         except _RETRYABLE_ERRORS as err:
-            last_err = err
 
-            # ── Smart 429 handling ────────────────────────────────────
+            # ── 429 Rate Limit ────────────────────────────────────────
             if isinstance(err, APIError) and err.status_code == 429:
                 is_daily, retry_after = _parse_429_error(err)
 
-                # Daily quota exhausted (OpenRouter-specific) — fail to next model
+                # Daily quota → switch to next model
                 if is_daily:
                     logger.error(
                         "Daily quota exhausted | provider=%s model=%s run_id=%s",
@@ -266,26 +288,34 @@ async def _make_retrying_call(
                     )
                     raise DailyQuotaExhausted(str(err)) from err
 
-                # Temporary throttle — use server's Retry-After if available
-                if retry_after > 0 and attempt < _MAX_RETRIES:
-                    wait = min(retry_after + 1, 120)
-                    logger.warning(
-                        "LLM retry %d/%d | provider=%s model=%s wait=%ss (Retry-After)",
-                        attempt, _MAX_RETRIES, provider, model, wait,
+                # RPM limit → wait and retry same model
+                rpm_retries += 1
+                if rpm_retries > _MAX_RPM_RETRIES:
+                    logger.error(
+                        "RPM retries exhausted (%d/%d) | provider=%s model=%s",
+                        rpm_retries, _MAX_RPM_RETRIES, provider, model,
                     )
-                    await asyncio.sleep(wait)
-                    continue
+                    raise
 
-            # ── Default backoff for non-429 errors ────────────────────
-            if attempt < _MAX_RETRIES:
-                wait = min(_RETRY_WAIT_BASE * (2 ** (attempt - 1)), 30)
+                wait = min(retry_after + 1, 120)
                 logger.warning(
-                    "LLM retry %d/%d | provider=%s model=%s error=%s wait=%ss",
-                    attempt, _MAX_RETRIES, provider, model, err, wait,
+                    "RPM limit — waiting %ss then retrying (%d/%d) | provider=%s model=%s",
+                    wait, rpm_retries, _MAX_RPM_RETRIES, provider, model,
                 )
                 await asyncio.sleep(wait)
-            else:
+                continue
+
+            # ── Other errors (timeout, 500, etc) ──────────────────────
+            other_retries += 1
+            if other_retries > _MAX_RETRIES:
                 raise
+
+            wait = min(_RETRY_WAIT_BASE * (2 ** (other_retries - 1)), 30)
+            logger.warning(
+                "LLM transient error — retrying (%d/%d) | provider=%s model=%s error=%s wait=%ss",
+                other_retries, _MAX_RETRIES, provider, model, err, wait,
+            )
+            await asyncio.sleep(wait)
 
 
 async def call_llm(
